@@ -6,6 +6,7 @@ import time
 FASTAPI_BASE_URL = "http://localhost:8000/api/v1"
 TRANSCRIPTION_ENDPOINT = f"{FASTAPI_BASE_URL}/transcribe"
 SUMMARIZATION_ENDPOINT = f"{FASTAPI_BASE_URL}/llm/summarize"
+ACTION_ITEMS_ENDPOINT = f"{FASTAPI_BASE_URL}/llm/extract-action-items"
 CHAT_ENDPOINT = f"{FASTAPI_BASE_URL}/llm/chat"
 
 # --- Page Setup ---
@@ -75,6 +76,7 @@ def init_session_state():
         'uploaded_filename': None,
         'summary_data': None,
         'summarizing': False,
+        'action_items_data': None,
         'summary_error': None,
         'chat_history': [],
         'chatting': False,
@@ -154,14 +156,25 @@ with col1:
         sum_disabled = not can_summarize or st.session_state.summarizing
         if st.button("📝 Summarize Notes", key="summarize_btn", use_container_width=True, disabled=sum_disabled):
             st.session_state.summarizing = True
-            with st.spinner("Generating summary and action items..."):
+            with st.spinner("Generating summary and extracting action items..."):
                 try:
                     payload = {"transcript": st.session_state.full_transcript_text}
-                    resp = requests.post(SUMMARIZATION_ENDPOINT, json=payload, timeout=180)
-                    resp.raise_for_status()
-                    st.session_state.summary_data = resp.json()
+
+                    # Call both endpoints
+                    summary_resp = requests.post(SUMMARIZATION_ENDPOINT, json=payload, timeout=180)
+                    summary_resp.raise_for_status()
+                    summary_data = summary_resp.json()
+
+                    action_resp = requests.post(ACTION_ITEMS_ENDPOINT, json=payload, timeout=180)
+                    action_resp.raise_for_status()
+                    action_items_data = action_resp.json()
+
+                    # Merge action items into summary_data
+                    summary_data["action_items"] = action_items_data.get("action_items", [])
+                    st.session_state.summary_data = summary_data
+
                 except Exception as e:
-                    st.session_state.summary_error = f"Summarization Error: {e}"
+                    st.session_state.summary_error = f"Summarization/Action Items Error: {e}"
                 finally:
                     st.session_state.summarizing = False
                     st.rerun()
