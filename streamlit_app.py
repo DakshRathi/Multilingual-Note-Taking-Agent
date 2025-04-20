@@ -17,7 +17,6 @@ st.set_page_config(
     page_title="Multilingual Meeting Notes Agent",
     page_icon="🎙️",
     layout="wide",
-    initial_sidebar_state="collapsed",
 )
 
 # --- Styling (Optional) ---
@@ -106,6 +105,15 @@ def reset_state():
             st.session_state[k] = None
 
 
+# Highlighting helper
+def highlight_text(text, query):
+    if not query:
+        return text
+    import re
+    pattern = re.compile(re.escape(query), re.IGNORECASE)
+    return pattern.sub(lambda m: f"**:orange[{m.group(0)}]**", text)
+
+
 def generate_txt(summary_data: dict, transcript_text: str) -> BytesIO:
     buffer = BytesIO()
     summary = summary_data.get("summary", "No summary available")
@@ -123,9 +131,7 @@ def generate_txt(summary_data: dict, transcript_text: str) -> BytesIO:
 st.title("🎙️ Multilingual Meeting Notes Agent")
 st.markdown("---")
 
-col1, col2 = st.columns([0.25, 0.75], gap="medium")
-
-with col1:
+with st.sidebar:
     st.header("Upload Audio File")
 
     uploaded_file = st.file_uploader(
@@ -198,6 +204,9 @@ with col1:
 
     # Status Display
     st.markdown("---")
+    st.subheader("🔍 Search in Transcript")
+    search_query = st.text_input("Enter a keyword to search", placeholder="e.g., budget, next meeting, action", key="keyword_search")
+    
     st.subheader("Status")
     if st.session_state.is_loading:
         st.info("⏳ Transcription in progress...")
@@ -214,80 +223,91 @@ with col1:
     else:
         st.info("Upload a file to start.")
 
-with col2:
-    st.header("Output")
 
-    if st.session_state.get("transcribe_clicked"):
-        data = st.session_state.transcript_data
-        st.subheader("Meeting Transcript (by Speaker)")
-        utterances = data.get('utterances') or []
-        if utterances:
-            for utt in utterances:
-                speaker = utt.get('speaker', 'Unknown')
-                start_ms = utt.get('start', 0)
-                timestamp = time.strftime('%M:%S', time.gmtime(start_ms/1000))
+if st.session_state.get("transcribe_clicked"):
+    data = st.session_state.transcript_data
+    st.subheader("Meeting Transcript (by Speaker)")
+    utterances = data.get('utterances') or []
+    # Display transcript with keyword filter
+    if utterances:
+        for utt in utterances:
+            speaker = utt.get('speaker', 'Unknown')
+            start_ms = utt.get('start', 0)
+            timestamp = time.strftime('%M:%S', time.gmtime(start_ms/1000))
+            text = utt.get('text', '')
+            if search_query.lower() in text.lower():
                 with st.chat_message(speaker):
-                    st.markdown(f"_{timestamp}_ | {utt.get('text','')}")
+                    st.markdown(f"_{timestamp}_ | {highlight_text(text, search_query)}")
+    else:
+        # fallback for full transcript
+        if search_query:
+            matched_lines = [line for line in st.session_state.full_transcript_text.split('\n') if search_query.lower() in line.lower()]
+            if matched_lines:
+                st.write("### Matching Lines:")
+                for line in matched_lines:
+                    st.markdown(highlight_text(line, search_query))
+            else:
+                st.warning("No matches found.")
         else:
             st.text_area("Full Transcript", value=st.session_state.full_transcript_text, height=300, disabled=True)
 
+    st.markdown("---")
+
+    if st.session_state.summary_data:
+        sd = st.session_state.summary_data
+        st.subheader("Meeting Summary")
+        st.markdown(sd.get('summary','_No summary generated._'))
+        st.subheader("Action Items")
+        items = sd.get('action_items', [])
+        if items:
+            for it in items:
+                st.markdown(f"- {it}")
+        else:
+            st.info("No specific action items identified.")
+
+        txt_buffer = generate_txt(sd, st.session_state.full_transcript_text)
+        st.download_button(
+            label="📥 Export to txt",
+            data=txt_buffer,
+            file_name=f"{st.session_state.uploaded_filename.split('.')[0]}.txt",
+            mime="application/txt",
+            use_container_width=True
+        )
         st.markdown("---")
 
-        if st.session_state.summary_data:
-            sd = st.session_state.summary_data
-            st.subheader("Meeting Summary")
-            st.markdown(sd.get('summary','_No summary generated._'))
-            st.subheader("Action Items")
-            items = sd.get('action_items', [])
-            if items:
-                for it in items:
-                    st.markdown(f"- {it}")
-            else:
-                st.info("No specific action items identified.")
+    # Chat Interface
+    st.subheader("Chat with Transcript Context")
+    for msg in st.session_state.chat_history:
+        role = msg['role']
+        with st.chat_message(role):
+            st.markdown(msg['content'])
 
-            txt_buffer = generate_txt(sd, st.session_state.full_transcript_text)
-            st.download_button(
-                label="📥 Export to txt",
-                data=txt_buffer,
-                file_name=f"{st.session_state.uploaded_filename.split('.')[0]}.txt",
-                mime="application/txt",
-                use_container_width=True
-            )
-            st.markdown("---")
+    user_input = st.chat_input("Ask a question about the transcript...", disabled=st.session_state.chatting)
+    if user_input:
+        st.session_state.chat_history.append({"role": "user", "content": user_input})
+        st.session_state.chatting = True
+        st.rerun()
 
-        # Chat Interface
-        st.subheader("Chat with Transcript Context")
-        for msg in st.session_state.chat_history:
-            role = msg['role']
-            with st.chat_message(role):
-                st.markdown(msg['content'])
-
-        user_input = st.chat_input("Ask a question about the transcript...", disabled=st.session_state.chatting)
-        if user_input:
-            st.session_state.chat_history.append({"role": "user", "content": user_input})
-            st.session_state.chatting = True
-            st.rerun()
-
-        # On rerun, if chatting and last message is user, call Chat API
-        if st.session_state.chatting and st.session_state.chat_history[-1]['role'] == 'user':
-            with st.spinner("🤖 Thinking..."):
-                try:
-                    payload = {
-                        "transcript_context": st.session_state.full_transcript_text,
-                        "user_query": st.session_state.chat_history[-1]['content']
-                    }
-                    resp = requests.post(CHAT_ENDPOINT, json=payload, timeout=120)
-                    resp.raise_for_status()
-                    ai_resp = resp.json().get('ai_response','')
-                    st.session_state.chat_history.append({"role": "assistant", "content": ai_resp})
-                except Exception as e:
-                    st.session_state.chat_history.append({"role": "assistant", "content": f"Error: {e}"})
-                finally:
-                    st.session_state.chatting = False
-                    st.rerun()
-    else:
-        if not st.session_state.is_loading and not st.session_state.error_message:
-            st.info("⬆️ Upload an audio file and click 'Transcribe Audio' to begin.")
+    # On rerun, if chatting and last message is user, call Chat API
+    if st.session_state.chatting and st.session_state.chat_history[-1]['role'] == 'user':
+        with st.spinner("🤖 Thinking..."):
+            try:
+                payload = {
+                    "transcript_context": st.session_state.full_transcript_text,
+                    "user_query": st.session_state.chat_history[-1]['content']
+                }
+                resp = requests.post(CHAT_ENDPOINT, json=payload, timeout=120)
+                resp.raise_for_status()
+                ai_resp = resp.json().get('ai_response','')
+                st.session_state.chat_history.append({"role": "assistant", "content": ai_resp})
+            except Exception as e:
+                st.session_state.chat_history.append({"role": "assistant", "content": f"Error: {e}"})
+            finally:
+                st.session_state.chatting = False
+                st.rerun()
+else:
+    if not st.session_state.is_loading and not st.session_state.error_message:
+        st.info("⬆️ Upload an audio file and click 'Transcribe Audio' to begin.")
 
 # --- Footer ---
 st.markdown("---")
