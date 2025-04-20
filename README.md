@@ -130,6 +130,7 @@ This will typically open the Streamlit application automatically in your web bro
 ├── .gitignore
 ├── README.md # This file
 ├── requirements.txt
+├── LICENSE
 ├── streamlit_app.py # Main Streamlit frontend application code
 └── src/ # Backend source code directory
     ├── init.py
@@ -152,3 +153,8 @@ This will typically open the Streamlit application automatically in your web bro
     │   └── transcription_service.py
     └── main.py # Main FastAPI application setup
 ```
+
+## 📝 License
+This project is licensed under the [MIT License](LICENSE).
+
+You are free to use, modify, and distribute this software in your own projects, provided you include the original copyright.
