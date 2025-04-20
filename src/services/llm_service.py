@@ -1,9 +1,8 @@
 # src/services/llm_service.py
-import re
 from langchain_groq import ChatGroq
-from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser, PydanticOutputParser
-
+from langchain_core.exceptions import OutputParserException
 
 from src.core.config import settings, logger
 from src.schemas.llm import SummarizationResponse, ActionItemsResponse, ChatResponse
@@ -35,21 +34,26 @@ Human: Based on the transcript provided, generate the concise summary.
 Assistant:"""
 summary_only_prompt = ChatPromptTemplate.from_template(SUMMARY_ONLY_PROMPT_TEMPLATE)
 
-parser = PydanticOutputParser(pydantic_object=ActionItemsResponse)
+action_items_parser = PydanticOutputParser(pydantic_object=ActionItemsResponse)
 
-action_items_prompt = PromptTemplate(
-    template="""You are expert at identifying action items from transcripts. Analyze the provided transcript and extract specific, concrete tasks or actions mentioned in transcript.
-    - Include the owner if mentioned (e.g., '- Send report - Alice').
-    - If NO specific action items are identified, output the exact phrase: NO_ACTION_ITEMS
-    \n---
-    Transcript Context:
-    {context}
-    ---\n
-    {format_instruction}
-    Human: Based *only* on the transcript provided, list all specific action items using the specified format, or state NO_ACTION_ITEMS if none exist
-    Assistant: """,
-    input_variables=['context'],
-    partial_variables={'format_instruction':parser.get_format_instructions()}
+ACTION_ITEMS_PROMPT_TEMPLATE_PYDANTIC = """System: You are an expert meeting assistant focusing ONLY on identifying action items from the provided transcript.
+Extract specific, concrete tasks or actions assigned during the meeting. Include the owner if mentioned.
+Format your response as a JSON object according to the following schema.
+If NO specific action items are identified, return a JSON object with an empty list for the 'action_items' field.
+
+{format_instructions}
+
+---
+Transcript Context:
+{context}
+---
+
+Human: Based *only* on the transcript provided, extract all specific action items and format them as JSON according to the schema.
+Assistant:""" # Removed NO_ACTION_ITEMS string instruction
+
+action_items_prompt_pydantic = ChatPromptTemplate.from_template(
+    ACTION_ITEMS_PROMPT_TEMPLATE_PYDANTIC,
+    partial_variables={"format_instructions": action_items_parser.get_format_instructions()}
 )
 
 CHAT_PROMPT_TEMPLATE = """System: You are an AI assistant answering questions based *only* on the provided meeting transcript context. Be concise and directly address the user's query using information from the transcript. If the answer cannot be found in the transcript, explicitly state "The answer is not available in the provided transcript context." Do not make assumptions or use external knowledge.
@@ -83,20 +87,31 @@ async def generate_summary(transcript: str) -> SummarizationResponse:
 
 
 async def extract_action_items(transcript: str) -> ActionItemsResponse:
-    """Extracts ONLY the action items from the transcript."""
+    """Extracts ONLY the action items using PydanticOutputParser."""
     if not llm:
         raise ConnectionError("LLM service is not available.")
     if not transcript:
         raise ValueError("Transcript cannot be empty.")
 
-    logger.info(f"Requesting action items extraction from model {settings.GROQ_MODEL_NAME}")
+    logger.info(f"Requesting action items extraction")
     try:
-        chain = action_items_prompt | llm | parser
-        raw_output = await chain.ainvoke({"context": transcript})
-        logger.info("Action items LLM call successful.")
+        # Chain now uses the pydantic prompt and parser
+        chain = action_items_prompt_pydantic | llm | action_items_parser
 
-        action_items_list = [item for item in raw_output.action_items if item] 
-        return ActionItemsResponse(action_items=action_items_list)
+        # The result of invoke IS the parsed Pydantic object
+        parsed_output: ActionItemsResponse = await chain.ainvoke({"context": transcript})
+        logger.info("Action items LLM call and parsing successful.")
+
+        # Optional: Filter out any empty strings the LLM might have included
+        if parsed_output and parsed_output.action_items:
+            parsed_output.action_items = [item for item in parsed_output.action_items if item and item.strip()]
+
+        # Add model used before returning
+        return parsed_output
+
+    except OutputParserException as ope:
+        logger.error(f"Failed to parse LLM output for action items: {ope}", exc_info=True)
+        raise RuntimeError(f"Failed to parse action items from LLM response: {ope}")
     except Exception as e:
         logger.error(f"Action item extraction failed: {e}", exc_info=True)
         raise RuntimeError(f"Failed to extract action items: {e}")

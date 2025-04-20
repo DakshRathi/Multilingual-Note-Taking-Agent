@@ -1,6 +1,9 @@
 import streamlit as st
 import requests
 import time
+from io import BytesIO
+import os
+
 
 # --- Configuration ---
 FASTAPI_BASE_URL = "http://localhost:8000/api/v1"
@@ -101,6 +104,20 @@ def reset_state():
             st.session_state[k] = False
         else:
             st.session_state[k] = None
+
+
+def generate_txt(summary_data: dict, transcript_text: str) -> BytesIO:
+    buffer = BytesIO()
+    summary = summary_data.get("summary", "No summary available")
+    action_items = summary_data.get("action_items", [])
+
+    # Format action items
+    action_items_text = "\n".join([f"- {item}" for item in action_items]) if action_items else "No specific action items identified."
+    content = f"""🎙️ Meeting Notes\n\n📝 Summary:{summary[12:]}\n\n✅ Action Items:\n{action_items_text}\n\n🗣️ Transcript:\n{transcript_text or 'No transcript available.'}"""
+
+    buffer.write(content.strip().encode("utf-8"))
+    buffer.seek(0)
+    return buffer
 
 # --- UI Layout ---
 st.title("🎙️ Multilingual Meeting Notes Agent")
@@ -227,7 +244,15 @@ with col2:
                     st.markdown(f"- {it}")
             else:
                 st.info("No specific action items identified.")
-            st.caption(f"Model used: {sd.get('model_used','N/A')}")
+
+            txt_buffer = generate_txt(sd, st.session_state.full_transcript_text)
+            st.download_button(
+                label="📥 Export to txt",
+                data=txt_buffer,
+                file_name=f"{st.session_state.uploaded_filename.split('.')[0]}.txt",
+                mime="application/txt",
+                use_container_width=True
+            )
             st.markdown("---")
 
         # Chat Interface
@@ -266,4 +291,4 @@ with col2:
 
 # --- Footer ---
 st.markdown("---")
-st.caption("HOLON x KBI AI Agents Hackathon 2025 - Track 1 Submission")
+st.caption("HOLON x KBI AI Agents Hackathon 2025 - Track 1 - Daksh Rathi")

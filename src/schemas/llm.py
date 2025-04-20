@@ -1,6 +1,6 @@
 # src/schemas/llm.py
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List
 
 # Request Schemas
 class LLMRequestBase(BaseModel):
