@@ -1,21 +1,22 @@
-# streamlit_app.py
 import streamlit as st
 import requests
 import time
 
 # --- Configuration ---
-FASTAPI_BACKEND_URL = "http://localhost:8000/api/v1/transcribe"
+FASTAPI_BASE_URL = "http://localhost:8000/api/v1"
+TRANSCRIPTION_ENDPOINT = f"{FASTAPI_BASE_URL}/transcribe"
+SUMMARIZATION_ENDPOINT = f"{FASTAPI_BASE_URL}/llm/summarize"
+CHAT_ENDPOINT = f"{FASTAPI_BASE_URL}/llm/chat"
 
 # --- Page Setup ---
 st.set_page_config(
     page_title="Multilingual Meeting Notes Agent",
     page_icon="🎙️",
-    layout="wide", 
+    layout="wide",
     initial_sidebar_state="collapsed",
 )
 
-# --- Styling (Optional - Minor Enhancements) ---
-# Inject custom CSS for subtle improvements if desired
+# --- Styling (Optional) ---
 st.markdown("""
 <style>
     /* Center align the title */
@@ -33,167 +34,223 @@ st.markdown("""
         color: #2a7c90;
         background-color: #f0f2f6; /* Default Streamlit bg */
         transition: all 0.3s ease-in-out;
+        margin-bottom: 10px; /* Add some space below buttons */
     }
     .stButton>button:hover {
         background-color: #2a7c90;
         color: white;
         border-color: #2a7c90;
     }
+    /* Explicitly style disabled buttons */
+    .stButton>button:disabled {
+        background-color: #cccccc !important; /* Ensure override */
+        border-color: #cccccc !important;
+        color: #666666 !important;
+        cursor: not-allowed !important;
+    }
     .stFileUploader {
         border: 1px dashed #2a7c90;
         border-radius: 10px;
         padding: 1rem;
     }
+    /* Styling for chat messages */
+    .stChatMessage {
+        border-radius: 10px;
+        padding: 0.75rem 1rem;
+        margin-bottom: 0.5rem;
+    }
+    /* Style action items list */
+    .action-items ul { list-style-type: disc; margin-left: 20px; }
+    .action-items li { margin-bottom: 5px; }
+
 </style>
 """, unsafe_allow_html=True)
 
-
 # --- Session State Initialization ---
-# Ensures variables persist across reruns
-if 'transcript_data' not in st.session_state:
-    st.session_state.transcript_data = None
-if 'error_message' not in st.session_state:
-    st.session_state.error_message = None
-if 'is_loading' not in st.session_state:
-    st.session_state.is_loading = False
-if 'uploaded_filename' not in st.session_state:
-    st.session_state.uploaded_filename = None
+def init_session_state():
+    defaults = {
+        'transcript_data': None,
+        'error_message': None,
+        'is_loading': False,
+        'uploaded_filename': None,
+        'summary_data': None,
+        'summarizing': False,
+        'summary_error': None,
+        'chat_history': [],
+        'chatting': False,
+        'chat_error': None,
+        'full_transcript_text': None
+    }
+    for key, val in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = val
+
+init_session_state()
 
 # --- Helper Functions ---
 def reset_state():
-    """Resets the session state variables for a new upload."""
-    st.session_state.transcript_data = None
-    st.session_state.error_message = None
-    st.session_state.is_loading = False
-    st.session_state.uploaded_filename = None
+    keys_to_skip = ['audio_uploader', 'chat_input', 'transcribe_button', 'summarize_btn']  # widget keys to skip
+    for k in st.session_state.keys():
+        if k in keys_to_skip:
+            continue
+        if k == 'chat_history':
+            st.session_state[k] = []
+        elif k in ['is_loading', 'summarizing', 'chatting']:
+            st.session_state[k] = False
+        else:
+            st.session_state[k] = None
 
 # --- UI Layout ---
 st.title("🎙️ Multilingual Meeting Notes Agent")
-st.markdown("---") 
+st.markdown("---")
 
 col1, col2 = st.columns([0.25, 0.75], gap="medium")
 
 with col1:
-    st.header("Upload Meeting Audio")
+    st.header("Upload Audio File")
 
     uploaded_file = st.file_uploader(
         "Choose an audio file...",
         type=['mp3', 'wav', 'm4a', 'ogg', 'mp4', 'webm', 'mov', 'flac', 'mkv'],
         key="audio_uploader",
-        on_change=reset_state # Reset results when a new file is selected
+        on_change=reset_state,
+        help="Upload your recording"
     )
 
-    if uploaded_file is not None:
+    if uploaded_file:
+        # Store filename for display
         if st.session_state.uploaded_filename != uploaded_file.name:
             st.session_state.uploaded_filename = uploaded_file.name
-
         st.info(f"File selected: `{st.session_state.uploaded_filename}`")
 
         # Transcription Button
-        if st.button("✨ Transcribe Audio", key="transcribe_button", use_container_width=True, disabled=st.session_state.is_loading):
+        transcribe_disabled = st.session_state.is_loading or st.session_state.transcript_data is not None
+        if st.button("✨ Transcribe Audio", key="transcribe_button", use_container_width=True, disabled=transcribe_disabled):
+            reset_state()
+            st.session_state.transcribe_clicked = True
+            st.session_state.uploaded_filename = uploaded_file.name
             st.session_state.is_loading = True
-            st.session_state.error_message = None 
-            st.session_state.transcript_data = None
-
-            # Show spinner while processing
             with st.spinner("Transcribing audio... This might take a moment depending on the file size."):
                 try:
                     files = {'file': (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
-                    response = requests.post(FASTAPI_BACKEND_URL, files=files)
-                    response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
-                    result = response.json()
-
-                    if result.get("status") == "TranscriptStatus.completed":
+                    resp = requests.post(TRANSCRIPTION_ENDPOINT, files=files)
+                    resp.raise_for_status()
+                    result = resp.json()
+                    status = result.get("status")
+                    if status == "TranscriptStatus.completed":
                         st.session_state.transcript_data = result
-                        st.session_state.error_message = None
-                    elif result.get("status") == "TranscriptStatus.error":
-                        st.session_state.error_message = f"Transcription failed: {result.get('error', 'Unknown error')}"
-                        st.session_state.transcript_data = None
+                        st.session_state.full_transcript_text = result.get('text', '')
                     else:
-                        st.session_state.error_message = f"Unexpected response status: {result.get('status', 'N/A')}"
-                        st.session_state.transcript_data = None
-
-                except requests.exceptions.RequestException as e:
-                    st.session_state.error_message = f"API Request Error: Could not connect to backend or timed out. ({e})"
-                    st.session_state.transcript_data = None
+                        err = result.get('error', 'Unknown error')
+                        st.session_state.error_message = f"Transcription failed: {err}"
                 except Exception as e:
-                    st.session_state.error_message = f"An unexpected error occurred: {e}"
-                    st.session_state.transcript_data = None
+                    st.session_state.error_message = f"API Error: {e}"
                 finally:
                     st.session_state.is_loading = False
+                    st.rerun()
+
+        # Summarization Button
+        can_summarize = bool(st.session_state.full_transcript_text)
+        sum_disabled = not can_summarize or st.session_state.summarizing
+        if st.button("📝 Summarize Notes", key="summarize_btn", use_container_width=True, disabled=sum_disabled):
+            st.session_state.summarizing = True
+            with st.spinner("Generating summary and action items..."):
+                try:
+                    payload = {"transcript": st.session_state.full_transcript_text}
+                    resp = requests.post(SUMMARIZATION_ENDPOINT, json=payload, timeout=180)
+                    resp.raise_for_status()
+                    st.session_state.summary_data = resp.json()
+                except Exception as e:
+                    st.session_state.summary_error = f"Summarization Error: {e}"
+                finally:
+                    st.session_state.summarizing = False
+                    st.rerun()
+
+    # Status Display
+    st.markdown("---")
+    st.subheader("Status")
+    if st.session_state.is_loading:
+        st.info("⏳ Transcription in progress...")
+    elif st.session_state.summarizing:
+        st.info("⏳ Summarization in progress...")
+    elif st.session_state.chatting:
+        st.info("⏳ Waiting for chat response...")
+    elif st.session_state.error_message:
+        st.error(st.session_state.error_message)
+    elif st.session_state.summary_error:
+        st.error(st.session_state.summary_error)
+    elif st.session_state.transcript_data:
+        st.success("✅ Ready")
+    else:
+        st.info("Upload a file to start.")
 
 with col2:
-    st.header("Transcription Results")
+    st.header("Output")
 
-    # Display loading indicator here as well if needed
-    if st.session_state.is_loading:
-        st.info("Processing... Please wait.")
-
-    # Display Error Message if any
-    if st.session_state.error_message:
-        st.error(st.session_state.error_message)
-
-    # Display Transcription Data
-    if st.session_state.transcript_data:
+    if st.session_state.get("transcribe_clicked"):
         data = st.session_state.transcript_data
-
-        success_placeholder = st.empty()
-        success_placeholder.success("Transcription Completed! 🎉")
-        time.sleep(0.8)
-        success_placeholder.empty()
-
-        # -- Display Utterances with Speaker Labels (more detailed) --
         st.subheader("Meeting Transcript (by Speaker)")
-        utterances = data.get('utterances')
+        utterances = data.get('utterances') or []
         if utterances:
-            # Use Streamlit Chat Message for a nice visual separation
-            with st.container(height=300): # Make the transcript area scrollable
-                for utt in utterances:
-                    speaker_label = utt.get('speaker', 'Unknown')
-                    avatar = "👤" if speaker_label == 'A' else "👥" if speaker_label else "❓" # Simple avatars
-                    with st.chat_message(name=f"Speaker {speaker_label}", avatar=avatar):
-                        start_ms = utt.get('start', 0)
-                        # Format timestamp (optional)
-                        # start_time_str = time.strftime('%M:%S', time.gmtime(start_ms // 1000))
-                        # st.markdown(f"_{start_time_str}_") # Add timestamp if desired
-                        st.write(utt.get('text', '')) # Use write for potentially longer text blocks
+            for utt in utterances:
+                speaker = utt.get('speaker', 'Unknown')
+                start_ms = utt.get('start', 0)
+                timestamp = time.strftime('%M:%S', time.gmtime(start_ms/1000))
+                with st.chat_message(speaker):
+                    st.markdown(f"_{timestamp}_ | {utt.get('text','')}")
         else:
-            # Fallback: Display full text if no utterances (or if preferred)
-            st.subheader("Full Transcript")
-            full_text = data.get('text', 'No text found.')
-            st.text_area("Transcript:", value=full_text, height=250, disabled=True)
+            st.text_area("Full Transcript", value=st.session_state.full_transcript_text, height=300, disabled=True)
 
-        st.markdown("---") # Separator
+        st.markdown("---")
 
-        # --- Placeholders for Future Features ---
-        st.subheader("Next Steps")
-        col_actions1, col_actions2, col_actions3 = st.columns(3)
+        if st.session_state.summary_data:
+            sd = st.session_state.summary_data
+            st.subheader("Meeting Summary")
+            st.markdown(sd.get('summary','_No summary generated._'))
+            st.subheader("Action Items")
+            items = sd.get('action_items', [])
+            if items:
+                for it in items:
+                    st.markdown(f"- {it}")
+            else:
+                st.info("No specific action items identified.")
+            st.caption(f"Model used: {sd.get('model_used','N/A')}")
+            st.markdown("---")
 
-        with col_actions1:
-            # Placeholder for Summarization Button
-            if st.button("Summarize Notes", key="summarize_btn", disabled=True, use_container_width=True):
-                 st.info("Summarization feature coming soon!")
-                 # In Phase 3: Call FastAPI /summarize endpoint
+        # Chat Interface
+        st.subheader("Chat with Transcript Context")
+        for msg in st.session_state.chat_history:
+            role = msg['role']
+            with st.chat_message(role):
+                st.markdown(msg['content'])
 
-        with col_actions2:
-            # Placeholder for Search
-             st.text_input("Search Transcript...", key="search_input", disabled=True)
-             # In Phase 4: Implement frontend search or call backend /search
+        user_input = st.chat_input("Ask a question about the transcript...", disabled=st.session_state.chatting)
+        if user_input:
+            st.session_state.chat_history.append({"role": "user", "content": user_input})
+            st.session_state.chatting = True
+            st.rerun()
 
-        with col_actions3:
-            # Placeholder for PDF Download
-            if st.button("Download PDF", key="pdf_btn", disabled=True, use_container_width=True):
-                 st.info("PDF export feature coming soon!")
-                 # In Phase 4: Link to FastAPI /export/pdf endpoint
+        # On rerun, if chatting and last message is user, call Chat API
+        if st.session_state.chatting and st.session_state.chat_history[-1]['role'] == 'user':
+            with st.spinner("🤖 Thinking..."):
+                try:
+                    payload = {
+                        "transcript_context": st.session_state.full_transcript_text,
+                        "user_query": st.session_state.chat_history[-1]['content']
+                    }
+                    resp = requests.post(CHAT_ENDPOINT, json=payload, timeout=120)
+                    resp.raise_for_status()
+                    ai_resp = resp.json().get('ai_response','')
+                    st.session_state.chat_history.append({"role": "assistant", "content": ai_resp})
+                except Exception as e:
+                    st.session_state.chat_history.append({"role": "assistant", "content": f"Error: {e}"})
+                finally:
+                    st.session_state.chatting = False
+                    st.rerun()
+    else:
+        if not st.session_state.is_loading and not st.session_state.error_message:
+            st.info("⬆️ Upload an audio file and click 'Transcribe Audio' to begin.")
 
-        # Placeholder for Chat Interface (might integrate differently later)
-        st.text_input("Ask about the meeting...", key="chat_query_input", disabled=True)
-        # In Phase 3: Implement chat logic calling /chat endpoint
-
-    elif not st.session_state.is_loading and not st.session_state.error_message:
-        st.info("Upload an audio file and click 'Transcribe Audio' to see the results.")
-
-# --- Footer (Optional) ---
+# --- Footer ---
 st.markdown("---")
 st.caption("HOLON x KBI AI Agents Hackathon 2025 - Track 1 Submission")
-

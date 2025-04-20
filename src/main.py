@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.core.config import settings, logger
 from src.api.endpoints import transcription
+from src.api.endpoints import llm as llm_router
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -24,9 +25,7 @@ logger.info("CORS middleware added with permissive settings for development.")
 
 # Include API routers
 app.include_router(transcription.router, prefix=settings.API_V1_STR)
-# Add other routers here later (e.g., for summarization, chat, export)
-# app.include_router(summarization.router, prefix=settings.API_V1_STR)
-# app.include_router(chat.router, prefix=settings.API_V1_STR)
+app.include_router(llm_router.router, prefix=f"{settings.API_V1_STR}/llm")
 
 @app.get("/ping", tags=["Health"])
 async def ping():
@@ -34,8 +33,9 @@ async def ping():
     logger.info("Ping endpoint called")
     return {"message": "pong"}
 
+
 if __name__ == "__main__":
     import uvicorn
     logger.info("Starting Uvicorn server directly (for debugging)...")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
 
