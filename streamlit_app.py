@@ -121,7 +121,7 @@ def generate_txt(summary_data: dict, transcript_text: str) -> BytesIO:
 
     # Format action items
     action_items_text = "\n".join([f"- {item}" for item in action_items]) if action_items else "No specific action items identified."
-    content = f"""🎙️ Meeting Notes\n\n📝 Summary:{summary[12:]}\n\n✅ Action Items:\n{action_items_text}\n\n🗣️ Transcript:\n{transcript_text or 'No transcript available.'}"""
+    content = f"""🎙️ Meeting Notes\n\n📝 Summary:\n{summary}\n\n✅ Action Items:\n{action_items_text}\n\n🗣️ Transcript:\n{transcript_text or 'No transcript available.'}"""
 
     buffer.write(content.strip().encode("utf-8"))
     buffer.seek(0)
@@ -226,7 +226,7 @@ with st.sidebar:
 
 if st.session_state.get("transcribe_clicked"):
     data = st.session_state.transcript_data
-    st.subheader("Meeting Transcript (by Speaker)")
+    st.subheader("Meeting Transcript")
     utterances = data.get('utterances') or []
     # Display transcript with keyword filter
     if utterances:
@@ -235,9 +235,11 @@ if st.session_state.get("transcribe_clicked"):
             start_ms = utt.get('start', 0)
             timestamp = time.strftime('%M:%S', time.gmtime(start_ms/1000))
             text = utt.get('text', '')
-            if search_query.lower() in text.lower():
-                with st.chat_message(speaker):
+            with st.chat_message(speaker):
+                if search_query and search_query.lower() in text.lower():
                     st.markdown(f"_{timestamp}_ | {highlight_text(text, search_query)}")
+                else:
+                    st.markdown(f"_{timestamp}_ | {text}")
     else:
         # fallback for full transcript
         if search_query:
