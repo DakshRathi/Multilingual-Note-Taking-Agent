@@ -1,4 +1,11 @@
 # 🎙️ Multilingual Note-Taking Agent (HOLON x KBI Hackathon Track 1)
+[![Python Version](https://img.shields.io/badge/Python-3.10+-blue)](https://python.org)
+[![Frontend](https://img.shields.io/badge/Frontend-Streamlit-red)](https://streamlit.io/)
+[![Backend](https://img.shields.io/badge/Backend-FastAPI-lightblue)](https://fastapi.tiangolo.com/)
+[![ASR](https://img.shields.io/badge/ASR-AssemblyAI-darkblue)](https://www.assemblyai.com/)
+[![LLM Service](https://img.shields.io/badge/LLM-Groq-black)](https://groq.com/)
+[![LLM Framework](https://img.shields.io/badge/Framework-LangChain-darkgreen)](https://www.langchain.com/)
+
 
 This project is a submission for Track 1 of the **HOLON x KBI AI Agents Hackathon 2025**. It aims to build an AI agent that assists office workers by transcribing, summarizing, and enabling interaction with multilingual meeting recordings.
 
@@ -22,6 +29,11 @@ Manually taking notes during fast-paced, multilingual meetings is challenging an
 *   **Interactive Chat:** Allows users to ask questions about the transcript content, receiving context-aware answers from the LLM via Groq.
 *   **Web Interface:** Simple and intuitive UI built with Streamlit for easy interaction.
 
+## 🎬 Demonstration Video
+
+Watch a quick demonstration of the Multilingual Note-Taking Agent in action, showcasing the Streamlit interface:
+
+📽️ [Watch the Demo Video](https://drive.google.com/file/d/1JIEy2PhjRmKbPdTmwWuXhiOcmfhleHq7/view?usp=sharing)
 
 ## 🏗️ Architecture
 
@@ -154,7 +166,22 @@ This will typically open the Streamlit application automatically in your web bro
     └── main.py # Main FastAPI application setup
 ```
 
+## 🏛️ Codebase Explanation
+
+The backend code resides within the `src/` directory, organized for clarity and modularity:
+
+*   **`src/main.py`:** The main entry point for the FastAPI backend. It initializes the FastAPI application instance, configures middleware (like CORS for frontend communication), and includes the API routers defined in the `src/api/endpoints/` directory.
+*   **`src/core/config.py`:** Handles application-wide settings. It uses Pydantic's `BaseSettings` to load configuration variables (like API keys and LLM model names) from the environment variables, making configuration management easy and secure. It also set up basic logging.
+*   **`src/api/`:** Contains the API layer code, separating endpoint definitions from the core logic.
+    *   `endpoints/`: This sub-directory holds individual Python files for different groups of API routes (`transcription.py` for `/transcribe`, `llm.py` for `/summarize`, `/extract-action-items`, `/chat`). Each file defines `APIRouter` instances.
+*   **`src/schemas/`:** Defines the data structures for API requests and responses using Pydantic models. This enforces data validation and provides clear contracts for how data should look when sent to or received from the API (e.g., `TranscriptionResponse`, `SummarizationRequest`).
+*   **`src/services/`:** Contains the core business logic of the application. It decouples the logic from the API endpoints.
+    *   `transcription_service.py`: Interacts with the AssemblyAI API, handles temporary audio file storage, and processes transcription results.
+    *   `llm_service.py`: Contains the logic for interacting with the Groq API via LangChain, including defining prompts, setting up chains (e.g., for summarization, action item extraction with parsing, chat), and processing the LLM responses.
+
+This structure promotes separation of concerns, making the codebase easier to understand, maintain, and extend.
+
 ## 📝 License
 This project is licensed under the [MIT License](LICENSE).
 
-You are free to use, modify, and distribute this software in your own projects, provided you include the original copyright.
+You are free to use, modify, and distribute this software in your own projects, provided you include the original copyright notice and permission notice in all copies or substantial portions of the Software.
